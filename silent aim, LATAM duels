@@ -1,0 +1,578 @@
+local RunService = game:GetService("RunService")
+if not RunService:IsClient() then return end
+
+local Players           = game:GetService("Players")
+local UIS               = game:GetService("UserInputService")
+local Workspace         = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Camera      = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    repeat
+        task.wait()
+        LocalPlayer = Players.LocalPlayer
+    until LocalPlayer
+end
+local Mouse       = LocalPlayer:GetMouse()
+local Character   = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local Humanoid    = Character:WaitForChild("Humanoid", 10) or Character:FindFirstChildOfClass("Humanoid")
+local DefaultSpeed     = Humanoid and Humanoid.WalkSpeed or 16
+local DefaultGravity   = Workspace.Gravity or 196.2
+local DefaultJumpPower = Humanoid and (Humanoid.JumpPower or 50) or 50
+
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+SpeedEnabled       = false
+WalkSpeedValue     = 16
+_speedLV           = nil
+_speedAtt          = nil
+InfiniteJump       = false
+GravityEnabled     = false
+GravityValue       = 50
+FlyEnabled         = false
+FlySpeed           = 50
+NoclipEnabled      = false
+JumpPowerEnabled   = false
+CustomJumpPower    = 50
+
+EspEnabled          = false
+EspNames            = false
+EspDistance         = false
+EspTeamCheck        = false
+HighlightEspEnabled = false
+HIGHLIGHT_COLOR     = Color3.fromRGB(0, 0, 0)
+PlayerHighlights    = {}
+
+HitboxExpanderEnabled  = false
+HitboxSize             = 10
+InvisibleHitboxEnabled = false
+InvisibleHitboxSize    = 10
+
+AutoShootEnabled     = false
+AutoShootParts       = {"Head","HumanoidRootPart","UpperTorso","Torso"}
+AutoShootActiveParts = {Head=true,HumanoidRootPart=true,UpperTorso=true,Torso=true}
+
+SilentAimEnabled = false
+FovCircleEnabled = false
+FovRadiusValue   = 300
+SilentAimPart    = "Head"
+
+AimEnabled    = false
+AimWallCheck  = true
+AimTargetPart = "Head"
+AimFOV        = 180
+AimSmoothness = 0.15
+AimPrediction = 0.08
+AimCurrentTool = nil
+
+FarmEnabled            = false
+FarmDelay              = 0.5
+killAllOn              = false
+TeleportEnabled_Hitbox = false
+autoTpEnabled          = false
+autoVoteEnabled        = false
+selectedPad            = "Pad1"
+isInStreakMatch        = false
+_inGame                = false
+selectedAnimationPack  = "(None)"
+
+local targetPartAliases = {
+    Torso = { "UpperTorso", "Torso", "HumanoidRootPart" },
+    LeftArm = { "LeftUpperArm", "Left Arm", "LeftHand" },
+    RightArm = { "RightUpperArm", "Right Arm", "RightHand" },
+    LeftLeg = { "LeftUpperLeg", "Left Leg", "LeftFoot" },
+    RightLeg = { "RightUpperLeg", "Right Leg", "RightFoot" },
+}
+local function resolveTargetBodyPart(character, name)
+    local exact = character:FindFirstChild(name)
+    if exact and exact:IsA("BasePart") then return exact end
+    for _, alias in ipairs(targetPartAliases[name] or {}) do
+        local part = character:FindFirstChild(alias)
+        if part and part:IsA("BasePart") then return part end
+    end
+end
+
+local function isInGame()
+    local map = LocalPlayer:GetAttribute("Map")
+    local gm  = LocalPlayer:GetAttribute("Game")
+    local mid = LocalPlayer:GetAttribute("MatchId")
+    if (map ~= nil and map ~= "") or (gm ~= nil and gm ~= "") or (mid ~= nil and mid ~= "") then
+        return true
+    end
+
+    local activeMaps = workspace:FindFirstChild("ActiveMaps")
+    if activeMaps and #activeMaps:GetChildren() > 0 then
+        local c = LocalPlayer.Character
+        local hrp = c and c:FindFirstChild("HumanoidRootPart")
+        if hrp and hrp:IsDescendantOf(activeMaps) then
+            return true
+        end
+    end
+    return false
+end
+
+local function isPlayerInGame(player)
+    if not player then return false end
+    if player == LocalPlayer then return isInGame() end
+    if not isInGame() then return false end
+
+    local myM, hisM = LocalPlayer:GetAttribute("MatchId"), player:GetAttribute("MatchId")
+    local myP, hisP = LocalPlayer:GetAttribute("Map"),     player:GetAttribute("Map")
+    local myG, hisG = LocalPlayer:GetAttribute("Game"),    player:GetAttribute("Game")
+    if myM and hisM and myM ~= "" and hisM ~= "" then return myM == hisM end
+    if myP and hisP and myP ~= "" and hisP ~= "" then return myP == hisP end
+    if myG and hisG and myG ~= "" and hisG ~= "" then return myG == hisG end
+
+    local activeMaps = workspace:FindFirstChild("ActiveMaps")
+    if activeMaps and player.Character and player.Character:IsDescendantOf(activeMaps) then
+        return true
+    end
+
+    if (myM and myM ~= "") or (myP and myP ~= "") or (myG and myG ~= "") then
+        return false
+    end
+
+    return true
+end
+
+local ScoreboardTeamSnapshot = {}
+local ScoreboardTeamLastRefresh = 0
+local ScoreboardTeamRefreshInterval = 0.15
+
+local function getScoreboard()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    local main = playerGui and playerGui:FindFirstChild("Main")
+    local frame = main and main:FindFirstChild("MainGameFrame")
+    return frame and frame:FindFirstChild("IngameScore")
+end
+
+local function refreshScoreboardTeams(force)
+    local now = os.clock()
+    if not force and now - ScoreboardTeamLastRefresh < ScoreboardTeamRefreshInterval then
+        return ScoreboardTeamSnapshot
+    end
+
+    ScoreboardTeamLastRefresh = now
+    local snapshot = {}
+    local score = getScoreboard()
+
+    if score then
+        local redFolder = score:FindFirstChild("TeamRed")
+        local blueFolder = score:FindFirstChild("TeamBlue")
+
+        if redFolder then
+            for _, entry in ipairs(redFolder:GetChildren()) do
+                snapshot[string.lower(entry.Name)] = "Red"
+            end
+        end
+        if blueFolder then
+            for _, entry in ipairs(blueFolder:GetChildren()) do
+                snapshot[string.lower(entry.Name)] = "Blue"
+            end
+        end
+    end
+
+    ScoreboardTeamSnapshot = snapshot
+    return snapshot
+end
+
+local function getPlayerTeam(player)
+    if not player then return nil end
+    local snapshot = refreshScoreboardTeams(false)
+    return snapshot[string.lower(player.Name)]
+        or (player.DisplayName and snapshot[string.lower(player.DisplayName)])
+end
+
+local MatchRoster = nil
+local rosterLoading = false
+local rosterNextLoad = 0
+local rosterHasSnapshot = false
+local rosterEnemyCharacters = {}
+local rosterEnemySet = {}
+
+local function refreshMatchRosterEnemies()
+    if not MatchRoster and not rosterLoading and os.clock() >= rosterNextLoad then
+        rosterNextLoad = os.clock() + 1
+        local shared = ReplicatedStorage:FindFirstChild("Shared")
+        local module = shared and shared:FindFirstChild("MatchRoster")
+        if module and module:IsA("ModuleScript") then
+            rosterLoading = true
+            task.spawn(function()
+                local ok, result = pcall(require, module)
+                if ok and type(result) == "table" then MatchRoster = result end
+                rosterLoading = false
+            end)
+        end
+    end
+    rosterHasSnapshot = false
+    rosterEnemyCharacters, rosterEnemySet = {}, {}
+    if not MatchRoster or type(MatchRoster.Enemies) ~= "function" then return end
+    local ok, enemies = pcall(MatchRoster.Enemies)
+    if not ok or type(enemies) ~= "table" then return end
+    rosterHasSnapshot = true
+    for _, entry in pairs(enemies) do
+        local char = nil
+        if typeof(entry) == "Instance" then
+            if entry:IsA("Player") then char = entry.Character
+            elseif entry:IsA("Model") then char = entry end
+        end
+        if char and char.Parent and char ~= LocalPlayer.Character and not rosterEnemySet[char] then
+            rosterEnemySet[char] = true
+            table.insert(rosterEnemyCharacters, char)
+        end
+    end
+end
+
+local function isPlayerEnemy(player)
+    if not player or player == LocalPlayer or not player.Character then return false end
+    if rosterHasSnapshot then return rosterEnemySet[player.Character] == true end
+    if LocalPlayer.Team and player.Team and not LocalPlayer.Neutral and not player.Neutral then
+        return LocalPlayer.Team ~= player.Team
+    end
+    return false
+end
+
+local function getMatchEnemyCharacters()
+    if rosterHasSnapshot then return rosterEnemyCharacters end
+    local enemies = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if isPlayerEnemy(player) then table.insert(enemies, player.Character) end
+    end
+    return enemies
+end
+
+local rosterElapsed = 0
+local rosterUpdateConnection = RunService.Heartbeat:Connect(function(delta)
+    rosterElapsed = rosterElapsed + delta
+    if rosterElapsed < 0.03 then return end
+    rosterElapsed = 0
+    refreshMatchRosterEnemies()
+end)
+
+local function applyJumpPower()
+end
+
+UIS.JumpRequest:Connect(function()
+    local char = LocalPlayer and LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum or hum:GetState() == Enum.HumanoidStateType.Dead then return end
+
+    if InfiniteJump then
+        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, 50, hrp.AssemblyLinearVelocity.Z)
+    elseif JumpPowerEnabled then
+        hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, CustomJumpPower, hrp.AssemblyLinearVelocity.Z)
+    end
+end)
+
+local HITBOX_PART_NAME = "HitboxPart"
+local HITBOX_COLOR     = Color3.fromRGB(0, 0, 0)
+
+local function cleanupPlayerHitbox(char)
+    if not char then return end
+    local hb = char:FindFirstChild(HITBOX_PART_NAME)
+    if hb then
+        pcall(function() hb:Destroy() end)
+    end
+    local oldFolder = char:FindFirstChild("Body")
+    if oldFolder then
+        pcall(function() oldFolder:Destroy() end)
+    end
+end
+
+local function restoreAllHitboxes()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character then
+            cleanupPlayerHitbox(player.Character)
+        end
+    end
+end
+
+local function applyHitboxToChar(char)
+    if not char or char == LocalPlayer.Character then return end
+    if not (HitboxExpanderEnabled or InvisibleHitboxEnabled) then
+        cleanupPlayerHitbox(char)
+        return
+    end
+
+    local player = Players:GetPlayerFromCharacter(char)
+    if player and not isPlayerEnemy(player) then
+        cleanupPlayerHitbox(char)
+        return
+    end
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then
+        cleanupPlayerHitbox(char)
+        return
+    end
+
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local sizeValue = InvisibleHitboxEnabled and InvisibleHitboxSize or HitboxSize
+    local isVisual = HitboxExpanderEnabled and not InvisibleHitboxEnabled
+    local transparency = isVisual and 0.55 or 1
+
+    local extra = char:FindFirstChild(HITBOX_PART_NAME)
+    if extra and extra:IsA("BasePart") then
+        local weld = extra:FindFirstChildOfClass("WeldConstraint")
+        if weld and weld.Part0 == root and weld.Part1 == extra then
+            extra.Size = Vector3.new(sizeValue, sizeValue, sizeValue)
+            extra.Transparency = transparency
+            extra.Color = HITBOX_COLOR
+            return
+        end
+        pcall(function() extra:Destroy() end)
+    end
+
+    local oldFolder = char:FindFirstChild("Body")
+    if oldFolder then pcall(function() oldFolder:Destroy() end) end
+
+    extra = Instance.new("Part")
+    extra.Name = HITBOX_PART_NAME
+    extra.Size = Vector3.new(sizeValue, sizeValue, sizeValue)
+    extra.CFrame = root.CFrame
+    extra.Transparency = transparency
+    extra.Color = HITBOX_COLOR
+    extra.Material = Enum.Material.Neon
+    extra.CanCollide = false
+    extra.CanQuery = true
+    extra.CanTouch = true
+    extra.Massless = true
+    extra.Anchored = false
+    extra.CastShadow = false
+    extra.CustomPhysicalProperties = PhysicalProperties.new(0.001, 0, 0, 0, 0)
+    extra.Parent = char
+
+    local weld = Instance.new("WeldConstraint")
+    weld.Part0 = root
+    weld.Part1 = extra
+    weld.Parent = extra
+
+    local function isWeaponOrProjectile(part)
+        if not part or not part.Parent then return false end
+        if part.Anchored then return false end
+        if part:IsA("Terrain") or part:IsDescendantOf(workspace.Terrain) then return false end
+
+        if part.Parent:FindFirstChildOfClass("Humanoid") then return false end
+        if part.Parent.Parent and part.Parent.Parent:FindFirstChildOfClass("Humanoid") and not part:FindFirstAncestorOfClass("Tool") then
+            return false
+        end
+
+        local tool = part:FindFirstAncestorOfClass("Tool")
+        if tool then return true end
+
+        local name = part.Name:lower()
+        if name:find("knife") or name:find("blade") or name:find("bullet")
+           or name:find("handle") or name:find("projectile") or name:find("slash")
+           or name:find("sword") or name:find("arrow") or name:find("shot") then
+            return true
+        end
+
+        return false
+    end
+
+    extra.Touched:Connect(function(hitPart)
+        if not hitPart or not hitPart.Parent then return end
+        if hitPart:IsDescendantOf(char) then return end
+        if not isWeaponOrProjectile(hitPart) then return end
+
+        pcall(function()
+            if typeof(firetouchinterest) == "function" and root and root.Parent then
+                firetouchinterest(hitPart, root, 0)
+                firetouchinterest(hitPart, root, 1)
+
+                local tool = hitPart:FindFirstAncestorOfClass("Tool")
+                local handle = tool and tool:FindFirstChild("Handle")
+                if handle and handle ~= hitPart and isWeaponOrProjectile(handle) then
+                    firetouchinterest(handle, root, 0)
+                    firetouchinterest(handle, root, 1)
+                end
+            end
+        end)
+    end)
+end
+
+local function refreshAllHitboxes()
+    if not (HitboxExpanderEnabled or InvisibleHitboxEnabled) then
+        restoreAllHitboxes()
+        return
+    end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            applyHitboxToChar(player.Character)
+        end
+    end
+end
+
+local playerState  = { isInvisible = false }
+local InvisThread  = nil
+local InvisGui     = nil
+local InvisButton  = nil
+local InvisConnections = {}
+local InvisParts   = {}
+
+local HAS_SIMRADIUS = false
+pcall(function()
+    sethiddenproperty(LocalPlayer, "SimulationRadius", 1000)
+    HAS_SIMRADIUS = true
+end)
+
+local function setSimRadius(v)
+    if HAS_SIMRADIUS then
+        pcall(sethiddenproperty, LocalPlayer, "SimulationRadius", v)
+    end
+end
+
+local _origTransp      = {}
+local _invisRenderConn = nil
+local _invisPartCache  = {}
+
+local function buildInvisCache(char)
+    _invisPartCache = {}
+    if not char then return end
+    for _, d in ipairs(char:GetDescendants()) do
+        if d:IsA("BasePart") then
+            _invisPartCache[#_invisPartCache + 1] = d
+        end
+    end
+end
+
+local function applyInvisTransparency(char, alpha)
+    if not char then return end
+    if #_invisPartCache == 0 then buildInvisCache(char) end
+    for i = 1, #_invisPartCache do
+        local d = _invisPartCache[i]
+        if d and d.Parent then
+            if alpha > 0 then
+                if _origTransp[d] == nil then
+                    _origTransp[d] = d.Transparency
+                end
+                d.LocalTransparencyModifier = alpha
+                d.Transparency = math.max(d.Transparency, alpha * 0.9)
+            else
+                d.LocalTransparencyModifier = 0
+                if _origTransp[d] ~= nil then
+                    d.Transparency = _origTransp[d]
+                    _origTransp[d] = nil
+                end
+            end
+        end
+    end
+end
+
+local function setLocalVisibility(char, alpha)
+    if _invisRenderConn then _invisRenderConn:Disconnect(); _invisRenderConn = nil end
+    if not char then return end
+
+    if alpha > 0 then
+        buildInvisCache(char)
+        applyInvisTransparency(char, alpha)
+        local _tick = 0
+        _invisRenderConn = RunService.RenderStepped:Connect(function()
+            _tick = _tick + 1
+            if _tick % 5 ~= 0 then return end
+            if playerState.isInvisible then
+                for i = 1, #_invisPartCache do
+                    local d = _invisPartCache[i]
+                    if d and d.Parent then
+                        d.LocalTransparencyModifier = alpha
+                    end
+                end
+            else
+                if _invisRenderConn then _invisRenderConn:Disconnect(); _invisRenderConn = nil end
+            end
+        end)
+    else
+        applyInvisTransparency(char, 0)
+        _origTransp     = {}
+        _invisPartCache = {}
+    end
+end
+
+local function findClosestEnemyInvis()
+    local myChar = LocalPlayer.Character
+    local myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHRP then return nil end
+    local best, bestDist = nil, math.huge
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            local eHRP = p.Character:FindFirstChild("HumanoidRootPart")
+            local eHum = p.Character:FindFirstChildOfClass("Humanoid")
+            if eHRP and eHum and eHum.Health > 0 then
+                local d = (eHRP.Position - myHRP.Position).Magnitude
+                if d < bestDist then bestDist = d; best = p end
+            end
+        end
+    end
+    return best
+end
+
+local function doGuaranteedKill(target)
+    if not (target and target.Character) then return end
+    local myChar = LocalPlayer.Character
+    local myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local eHRP   = target.Character:FindFirstChild("HumanoidRootPart")
+    if not myHRP or not eHRP then return end
+    local tool   = myChar:FindFirstChildOfClass("Tool")
+    local handle = tool and tool:FindFirstChild("Handle")
+    local savedCF = myHRP.CFrame
+    setSimRadius(1000)
+    myHRP.CFrame = eHRP.CFrame * CFrame.new(0, 0, 2)
+    if handle then
+        for _, part in ipairs(target.Character:GetChildren()) do
+            if part:IsA("BasePart") then
+                pcall(firetouchinterest, handle, part, 0)
+                pcall(firetouchinterest, handle, part, 1)
+            end
+        end
+    end
+    if tool then pcall(function() tool:Activate() end) end
+    task.wait(0.08)
+    if playerState.isInvisible then
+        setSimRadius(0)
+        myHRP.CFrame = savedCF
+    end
+end
+
+local function startFallbackLoop()
+    InvisThread = task.spawn(function()
+        while playerState.isInvisible do
+            local c   = LocalPlayer.Character
+            local hrp = c and c:FindFirstChild("HumanoidRootPart")
+            local hum = c and c:FindFirstChildOfClass("Humanoid")
+            if hrp and hum then
+                local realCF = hrp.CFrame
+                hrp.AssemblyLinearVelocity  = Vector3.zero
+                hrp.AssemblyAngularVelocity = Vector3.zero
+                hrp.CFrame = CFrame.new(realCF.Position.X, -15000, realCF.Position.Z)
+                task.wait()
+                if playerState.isInvisible and hrp and hrp.Parent then
+                    hrp.CFrame = realCF
+                end
+                task.wait(0.05)
+            else
+                task.wait(0.1)
+            end
+        end
+    end)
+end
+
+local function toggleInvisibility()
+    playerState.isInvisible = not playerState.isInvisible
+
+    if InvisThread then task.cancel(InvisThread); InvisThread = nil end
+
+    if playerState.isInvisible then
+        if InvisButton then
+            InvisButton.Text = "Visible"
+            InvisButton.BackgroundColor3 = Color3.fromRGB(46, 204, 113)
+        end
+        task.spawn(function()
+            local char = LocalPlayer.Character
+            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+            if not char
